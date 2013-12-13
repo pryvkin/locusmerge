@@ -1,0 +1,41 @@
+# remove reads w/ > 5 mappings
+./bam_filter_by_nh data/in.bam 5 data/bamfile.bam
+
+# convert to bedgraph
+./bam_to_bedgraph.sh data/bamfile.bam data/bamfile
+
+# convert to bed
+./call_loci data/bamfile.pos.bg | \
+  awk '{OFS="\t"; print $1,$2,$3,".",0,"+"}' > data/bamfile.pos.bed
+./call_loci data/bamfile.neg.bg | \
+  awk '{OFS="\t"; print $1,$2,$3,".",0,"-"}' > data/bamfile.neg.bed
+
+# merge per-strand bed files and add locus IDs
+cat data/bamfile.pos.bed data/bamfile.neg.bed | \
+  sort -k1,1 -k2n,2n | \
+  awk '{OFS="\t"; $4 = sprintf("L%09d",NR); print }' > data/bamfile.bed
+
+# requires standalone devel version of samtools (0.1.19+)
+samtools sort -n -f -@ 3 data/bamfile.bam data/bamfile_byname.bam
+
+./locusmerge.sh data/bamfile_byname.bam data/bamfile.bed > data/bamfile.sim
+
+# compute coverage of loci
+bedtools coverage -s -counts -split -abam data/bamfile.bam -b data/bamfile.bed > \
+  data/bamfile.cov
+
+# compute uniq coverage of loci
+./bam_filter_by_nh data/bamfile.bam 1 /dev/stdout | \
+  bedtools coverage -s -counts -split -abam - -b data/bamfile.bed > \
+  data/bamfile.uniqcov
+
+### get annotation
+mkdir -p annot
+cd annot
+wget ftp://ftp.ensembl.org/pub/release-74/gtf/homo_sapiens/Homo_sapiens.GRCh37.74.gtf.gz
+gunzip Homo_sapiens.GRCh37.74.gtf.gz
+
+awk 'BEGIN {FS="\t"; OFS="\t"}
+     $1 ~ /^[0-9]+|^X|^Y/ { $1 = "chr"$1; print; next }
+     $1 == "MT" { $1 = "chrM"; print; next }' Homo_sapiens.GRCh37.74.gtf > \
+ ensembl.gtf
