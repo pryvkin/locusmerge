@@ -1,0 +1,14 @@
+#!/bin/bash
+
+# Given a bam file and a clustered loci bed, select only those reads
+# that map to the selected (clustered) loci
+
+if [ $# -lt 2 ]; then
+   echo "USAGE: $0 bam bed.clustered" >&2
+   exit 1
+fi
+
+bam=$1
+bed=$2
+
+bedtools intersect -s -split -abam $bam -b $bed > ${bam}.clustered

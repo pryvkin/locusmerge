@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# Given a BED with RNA loci and a clusters file produced by locusmerge,
+# select only those loci that are considered to be representative of
+# the clusters.
+
+if [ $# -lt 1 ]; then
+   echo "USAGE: $0 in.bed in.clusters" >&2
+   exit 1
+fi
+
+bed=$1
+clu=$2
+
+# replace locus IDs with cluster IDs for loci that were chosen
+# as representative for a cluster
+awk 'BEGIN {FS="\t"; OFS="\t"}
+     NR == FNR {cluster[$4] = $1; next}
+     cluster[$4] { $4 = cluster[$4]; print }' \
+  $clu $bed > ${bed}.clustered
+

@@ -1,0 +1,16 @@
+#!/bin/bash
+
+if [ $# -lt 3 ]; then
+    echo "USAGE: $0 in_sortedbyname.bam loci.bed maxhits" >&2
+    exit 1
+fi
+
+bam=$1
+bed=$2
+maxhits=$3
+
+./bam_filter_by_nh $bam $maxhits /dev/stdout | \
+  bedtools intersect -s -wo -abam - -b $bed | \
+  awk '{print $4"\t"$16"\t"($3-$2)}' | \
+  ./locusmerge_pairs - | sort | uniq -c | awk '{print $2"\t"$3"\t"$1}' | \
+  ./locusmerge_similarity -

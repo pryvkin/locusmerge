@@ -1,58 +1,98 @@
 #!/usr/bin/env Rscript
 
-if (length(args) < 5) {
- cat("USAGE: ./locusmerge_cluster.R in.similarity in.annot in.cov in.ucov out.clusters\n")
+args <- commandArgs(T)
+
+if (length(args) < 6) {
+ cat("USAGE: ./locusmerge_cluster.R in.similarity in.annot in.cov in.ucov allowed_overlaps.txt out.clusters\n")
  q(status=1)
 }
 
-args <- commandArgs(T)
-
-library('igraph')
-library('fastcluster')
+suppressPackageStartupMessages(library('igraph'))
+suppressPackageStartupMessages(library('fastcluster'))
 
 in.sim.filename <- args[1]
-in.annot <- args[2]
+in.annot.filename <- args[2]
 in.cov.filename <- args[3]
 in.ucov.filename <- args[4]
-out.filename <- args[5]
+in.allowed.filename <- args[5]
+out.filename <- args[6]
 
-annot=read.table('test.annot',sep="\t",as.is=T,row.names=1)
-coverage=read.table('test2.cov',sep="\t",row.names=1)
-uniqcov=read.table('test2.uniqcov',sep="\t",row.names=1)
+write("Loading locus similarity scores...", stderr());
+locus.similarities <- read.table(in.sim.filename, sep="\t", as.is=T)
+write("Loading locus annotations...", stderr());
+annot <- read.table(in.annot.filename, sep="\t", row.names=1, as.is=T,
+                    col.names=c("locus.id", "raw.cls", "cls", "all.cls", "all.id", "id"))
+write("Loading coverage files...", stderr());
+load.coverage <- function(filename) {
+    read.table(filename, sep="\t", row.names=4, as.is=T)[,6,drop=F]
+}
+coverage <- load.coverage(in.cov.filename)
+uniqcov <- load.coverage(in.ucov.filename)
+write("Loading allowed_class_pairs...", stderr());
+allowed.cls.pairs <- read.table(in.allowed.filename, sep="\t", as.is=T,
+                                comment.char="#", col.names=c("cls1", "cls2"))
 
-locus.similarities = read.table("/home/pry/data/tmp/locusmerge/test_all.sim", as.is=T, sep="\t");
-
-# avoid clusters containing 2+ of the following locus classes
-all.classes = unique(unlist(strsplit(annot[,3], ",")))
-avoid.cls.pairs = outer(rep(0, length(all.classes)), rep(0, length(all.classes)))
+# build class penalty matrix; if x_ij = 1 then avoid mixing
+# those classes within a cluster
+write("Building class penalty matrix...", stderr())
+all.classes = unique(unlist(strsplit(annot$all.cls, ",")))
+avoid.cls.pairs = outer(rep(1, length(all.classes)), rep(1, length(all.classes)))
 rownames(avoid.cls.pairs) = all.classes
-
 colnames(avoid.cls.pairs) = all.classes
-avoid.cls.pairs["miRNA",   c("tRNA", "mt-tRNA", "snoRNA", "snRNA", "rRNA")] = 1
-avoid.cls.pairs["tRNA",    c("miRNA", "snoRNA", "snRNA", "rRNA")] = 1
-avoid.cls.pairs["mt-tRNA", c("miRNA", "snoRNA", "snRNA", "rRNA")] = 1
-avoid.cls.pairs["snoRNA",  c("miRNA", "tRNA", "mt-tRNA", "snRNA","rRNA")] = 1
-avoid.cls.pairs["snRNA",   c("miRNA", "tRNA", "mt-tRNA", "snoRNA", "rRNA")] = 1
-avoid.cls.pairs["rRNA",    c("miRNA", "tRNA", "mt-tRNA", "snoRNA", "snRNA")] = 1
-relevant.cls = union(rownames(avoid.cls.pairs)[rowSums(avoid.cls.pairs) > 0],
-  colnames(avoid.cls.pairs)[colSums(avoid.cls.pairs) > 0] )
 
-# compute symmetric similarity by taking the max of the nonsymmetric similarities
-rownames(locus.similarities) = apply(locus.similarities[,c(1,2)], 1, paste, collapse="@@@")
-
-symm.sim = c()
-i = 0
-for(pair.name in rownames(locus.similarities)) {
-  rev.pair.name = paste(rev(unlist(strsplit(pair.name, "@@@"))), collapse="@@@")
-  symm.sim[pair.name] =
-    max( c(locus.similarities[pair.name,4], locus.similarities[rev.pair.name,4]))
-  if (i %% 10 == 0)
-    print(100*i/nrow(locus.similarities))
-  i = i +1
+specified.cls <- c(allowed.cls.pairs$cls1, allowed.cls.pairs$cls2)
+specified.cls <- setdiff(specified.cls, "*")
+missing.cls <- !(specified.cls %in% all.classes)
+if (any(missing.cls)) {
+    write(sprintf("WARNING: Non-existent classes were specified in %s: %s",
+                  in.allowed.filename,
+                  paste(specified.cls[missing.cls], collapse=",")), stderr())
 }
 
-#save(symm.sim, file='/home/pry/data/tmp/locusmerge/symmsim.Rdata')
-#load(file='/home/pry/data/tmp/locusmerge/symmsim.Rdata')
+allowed.cls.pairs <- subset(allowed.cls.pairs,
+                            cls1 %in% all.classes & cls2 %in% all.classes)
+
+cls.edge.list = as.matrix(allowed.cls.pairs[,c(1,2)])
+allowed.cls.graph = graph.edgelist(cls.edge.list, FALSE)
+components = decompose.graph(allowed.cls.graph)
+dummy <- lapply(components, function(g) {
+    x <- unique(V(g)$name)
+    if (any(x == "*")) {
+        # handle wildcards
+        non.wild <- x[x != "*"]
+        all.others <- setdiff(all.classes, non.wild)
+        pairs <- expand.grid(non.wild, all.others)
+    } else {
+        pairs <- t(combn(x, 2))
+    }
+    apply(pairs, 1, function(p) {
+        avoid.cls.pairs[p[1], p[2]] <<- 0
+        avoid.cls.pairs[p[2], p[1]] <<- 0
+    } )
+})
+
+relevant.cls <- setdiff(all.classes, "intergenic")
+
+# compute symmetric similarity by taking the max of the nonsymmetric similarities
+write("Symmetrizing locus similarity scores...", stderr())
+rownames(locus.similarities) = apply(locus.similarities[,c(1,2)], 1, paste, collapse="@@@")
+
+symm.sim <- c()
+i <- 0
+prev.pct.done <- 0
+for(pair.name in rownames(locus.similarities)) {
+  rev.pair.name <- paste(rev(unlist(strsplit(pair.name, "@@@"))), collapse="@@@")
+  symm.sim[pair.name] <-
+    max( c(locus.similarities[pair.name,4], locus.similarities[rev.pair.name,4]))
+  pct.done <- round(100*i/nrow(locus.similarities))
+  if (pct.done != prev.pct.done && (pct.done %% 2) == 0)
+      cat(".")
+  i <- i + 1
+  prev.pct.done <- pct.done
+}
+
+# save(symm.sim, file=file.path(dirname(out.filename), 'symmsim.Rdata'))
+# load(file=file.path(dirname(out.filename), 'symmsim.Rdata'))
 
 # remove redundant edges (since we'll be using a symmetric relation)
 edge.list = as.matrix(locus.similarities[,c(1,2)])
@@ -77,7 +117,7 @@ for(i in 1:length(components)) {
   g = components[[i]]
   V(g)$coverage = coverage[V(g)$name,1]
   V(g)$uniq.coverage = uniqcov[V(g)$name,1]
-  V(g)$label = annot[V(g)$name,1]
+  V(g)$label = annot[V(g)$name,]$cls
   components[[i]] = g
   maxcov[i] = max(V(g)$coverage)
   rm(g)
@@ -101,11 +141,12 @@ for(i in 1:length(expr.components)) {
                          coverage=V(expr.components[[i]])$coverage,
                          uniq.cov=V(expr.components[[i]])$uniq.coverage,
                          annot.cls=V(expr.components[[i]])$label,
-                         annot.id=annot[V(expr.components[[i]])$name,2])
+                         annot.id=annot[V(expr.components[[i]])$name,]$id)
   expr.component.tables[[i]] =
     expr.component.tables[[i]][order(-expr.component.tables[[i]]$coverage),]
 }
 
+write("Computing hierarchical clusterings...", stderr())
 # hierarchical clustering into trees
 htrees = list()
 for(i in 1:length(expr.component.tables)) {
@@ -139,7 +180,7 @@ count.rogue.elements = function(ht, k, annot, avoid.cls.pairs, relevant.cls) {
   clu = cutree(ht, k=k)
   nr = 0
   for(j in 1:k) {
-    annots = unique(annot[names(clu)[clu == j],]$V2)
+    annots = unique(annot[names(clu)[clu == j],]$cls)
     relevant.annots = annots[annots %in% relevant.cls]
     if (length(relevant.annots) < 2)
       next
@@ -163,7 +204,7 @@ count.rogue.elements = function(ht, k, annot, avoid.cls.pairs, relevant.cls) {
   return( nr )
 }
 count.rogue.elements.in.cluster = function(ids, annot, avoid.cls.pairs, relevant.cls) {
-  annots = unique(annot[ids,]$V2)
+  annots = unique(annot[ids,]$cls)
   relevant.annots = annots[annots %in% relevant.cls]
   if (length(relevant.annots) < 2)
     return (0)
@@ -177,6 +218,10 @@ count.rogue.elements.in.cluster = function(ids, annot, avoid.cls.pairs, relevant
   return ( sum(annots %in% offending.cls) )
 }
 
+write("Optimizing k...", stderr())
+
+pdf(file.path(dirname(out.filename), "k_optimization.pdf"), points=12)
+par(mfrow=c(2,2))
 clusterings = list()
 for(i in 1:length(expr.component.tables)) {
   ect = expr.component.tables[[i]]
@@ -224,11 +269,44 @@ for(i in 1:length(expr.component.tables)) {
     if (!is.na(rogue_by_k[k]))
       k = k + k_dir
   }
-  clusterings[[i]] = cutree(ht, k=optimal.k)
+
+  clu <- cutree(ht, k=optimal.k)
+  clusterings[[i]] <- clu
+  
+  # compute inter-cluster scores (proxy for crossmapping between clusters)
+  # we want this to be low.
+  ## if (length(unique(clu)) > 1) {
+  ##     clu.pairs <- combn(unique(clu), 2) 
+  ##     clu.max.pairwise.sim <- apply(clu.pairs, 2, function(cluster.pair) {
+  ##         clu.u <- names(clu)[clu == cluster.pair[1]]
+  ##         clu.v <- names(clu)[clu == cluster.pair[2]]
+  ##         locus.id.pairs <- as.vector(outer(clu.u, clu.v, function(locus.a, locus.b) {
+  ##             z <- t(apply(cbind(locus.a, locus.b), 1, sort))
+  ##             z <- paste(z[,1], z[,2], sep="@@@")
+  ##             } ))
+  ##         locus.sim.scores <- locus.similarities[locus.id.pairs , 4]
+  ##         locus.sim.scores[is.na(locus.sim.scores)] <- 0
+  ##         max(locus.sim.scores)
+  ##     } )
+  ##     hist(clu.max.pairwise.sim)
+  ## } else {
+  ##     plot(0, 0, pch='')
+  ## }
+  
+  
+  plot.x <- (1:length(rogue_by_k))[!is.na(rogue_by_k)]
+  plot.y <- rogue_by_k[!is.na(rogue_by_k)]
+
+  plot(plot.x, plot.y,
+       main=sprintf("Expr component %d, n=%d", i, nrow(ect)),
+       xlab="k", ylab="N_rogue", ylim=c(0,max(plot.y)))
+  lines(plot.x, plot.y)
+  abline(v = optimal.k, lty=2, col=2)
+  
 }
 
-####
-# TODO: ADD SINGLETONS
+dev.off()
+
 cluster.annot = data.frame(clu.id=NULL, nmemb=NULL, nrogue=NULL,
   main.id=NULL, main.cov=NULL, main.uniq.cov=NULL,
   main.annot.cls = NULL, main.annot.id=NULL,
@@ -272,7 +350,7 @@ for(i in 1:length(singletons)) {
     clu.id=sprintf("CL%0.6d.%0.6d", length(expr.component.tables) + i, j),
     nmemb = 1, nrogue = 0, main.id = id,
     main.cov = coverage[id,1], main.uniq.cov = uniqcov[id,1],
-    main.annot.cls = annot[id, 1], main.annot.id = annot[id, 2],
+    main.annot.cls = annot[id,]$cls, main.annot.id = annot[id,]$id,
     other.id = NA, low.cov = coverage[id,1] < min.cov, stringsAsFactors=F))
   nclu = 1 + nclu
 }

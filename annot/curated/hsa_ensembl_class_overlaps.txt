@@ -1,0 +1,15 @@
+# list of class pairs that are allowed to share a cluster without penalty
+# NOTE: these relationships are transitive so you don't need to
+#       specify every single pair when a group of classes go together
+intergenic	*
+protein_coding	processed_transcript
+protein_coding	nonsense_mediated_decay
+protein_coding	processed_pseudogene
+protein_coding	unprocessed_pseudogene
+protein_coding	non_stop_decay
+protein_coding	transcribed_processed_pseudogene
+protein_coding	transcribed_unprocessed_pseudogene
+protein_coding	sense_overlapping
+protein_coding	pseudogene
+protein_coding	3prime_overlapping_ncrna
+rRNA	Mt_rRNA

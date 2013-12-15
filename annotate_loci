@@ -1,0 +1,45 @@
+#!/bin/bash
+
+if [ $# -lt 4 ]; then
+    echo "USAGE: $0 loci.bed annotation_file coverage_file  output" >&2
+    echo "  current supported formats for annotation_file are:" >&2
+    echo "    GTF" >&2
+    exit 1
+fi
+locibed=$1
+annot=$2
+cov=$3
+outfile=$4
+
+# get extension of annot filename
+annotext="${annot##*.}"
+# convert to lowercase
+annotext="${annotext,,}"
+
+# ensure it's a supported format
+if [ "$annotext" != "gtf" ]; then
+    echo "Unsupported annotation type: $annotext" >&2
+    exit 1
+fi
+
+echo "Detected ${annotext} annotation format." >&2
+echo "Intersecting loci with annotation..." >&2
+
+bedtools intersect -wao -s -a data/bamfile.bed -b $annot | \
+  gawk '{FS="\t"; OFS="\t"}
+        { 
+         if ($8 != ".") {
+	   cls = $8
+           match($0, /transcript_id "([^"]+)"/, ary)
+           id = ary[1]
+         } else { 
+           cls = "intergenic"
+           id = "."
+         }
+         print $4, cls, id
+        }' > \
+  ${outfile}.raw
+
+echo "Prioritizing annotations for each locus..." >&2
+./prioritize_annot.R ${outfile}.raw $cov ${outfile}
+
