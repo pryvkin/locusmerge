@@ -90,6 +90,7 @@ for(pair.name in rownames(locus.similarities)) {
   i <- i + 1
   prev.pct.done <- pct.done
 }
+cat("\n")
 
 # save(symm.sim, file=file.path(dirname(out.filename), 'symmsim.Rdata'))
 # load(file=file.path(dirname(out.filename), 'symmsim.Rdata'))
@@ -242,7 +243,7 @@ for(i in 1:length(expr.component.tables)) {
   k = ceiling(max_k/2)
   while(lower_k < upper_k) {
     nr = count.rogue.elements(ht, k, annot, avoid.cls.pairs, relevant.cls)
-    cat(sprintf("%d    k=%d, nr=%d; (%d, %d)\n", i, k, nr, lower_k, upper_k))
+    #cat(sprintf("%d    k=%d, nr=%d; (%d, %d)\n", i, k, nr, lower_k, upper_k))
     rogue_by_k[k] = nr
     k_dir = 0
     if (nr <= min_nr) {
