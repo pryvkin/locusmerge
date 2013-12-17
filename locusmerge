@@ -54,7 +54,7 @@ done
 # reset the translated args
 eval set -- $args
 # now we can process with getopt
-while getopts ":hvc:" opt; do
+while getopts ":h-n:p:m:t:r:g:a:" opt; do
     case $opt in
         h)  usage ;;
         n)  ncpu=$OPTARG ;;
@@ -64,7 +64,8 @@ while getopts ":hvc:" opt; do
         g)  loc_call_maxgap=$OPTARG ;;
 	a)  ANNOTDIR=$OPTARG ;;
         d)  DEBUG=1 ;;
-        \?) usage ;;
+	-) ;;
+        \?) usage; exit 1 ;;
         :)
         echo "option -$OPTARG requires an argument"
         usage
@@ -105,6 +106,11 @@ case $annot in
      	;;
 esac
 
+if [ ! -e $inbam ]; then
+   echo "ERROR: Could not locate input BAM file: ${inbam}" >&2
+   exit 1
+fi
+
 if [ ! -e $annotfile ]; then
    echo "ERROR: Could not locate annotation file ${annotfile}" >&2
    exit	1
@@ -121,20 +127,21 @@ fi
 
 # remove reads w/ > N mappings
 echo "Removing reads with > ${loc_call_maxhits} hits..." >&2
-./bam_filter_by_nh $inbam ${loc_call_maxhits} ${prefix}.bam
+./locusmerge_bam_filter_by_nh $inbam ${loc_call_maxhits} ${prefix}.bam
 
 # convert to bedgraph
 echo "Converting BAM to bedGraph..." >&2
-./bam_to_bedgraph.sh ${prefix}.bam ${prefix}
+./locusmerge_bam_to_bedgraph ${prefix}.bam ${prefix}
 
 # segment into loci, producing a BED file
 echo "Segmenting transcriptome into loci (+)..." >&2
-./call_loci ${prefix}.pos.bg \ 
+./locusmerge_call_loci ${prefix}.pos.bg \
   --threshold=${loc_call_threshold} --minrun=${loc_call_minrun} \
   --maxgap=${loc_call_maxgap} | \
   awk '{OFS="\t"; print $1,$2,$3,".",0,"+"}' > ${prefix}.pos.bed
+
 echo "Segmenting transcriptome into loci (-)..." >&2
-./call_loci ${prefix}.neg.bg | \
+./locusmerge_call_loci ${prefix}.neg.bg \
   --threshold=${loc_call_threshold} --minrun=${loc_call_minrun} \
   --maxgap=${loc_call_maxgap} | \
   awk '{OFS="\t"; print $1,$2,$3,".",0,"-"}' > ${prefix}.neg.bed
@@ -162,13 +169,13 @@ bedtools coverage -s -counts -split -abam ${prefix}.bam -b ${prefix}.bed > \
 
 # compute uniq coverage of loci
 echo "Computing unique coverage..." >&2
-./bam_filter_by_nh ${prefix}.bam 1 /dev/stdout | \
+./locusmerge_bam_filter_by_nh ${prefix}.bam 1 /dev/stdout | \
   bedtools coverage -s -counts -split -abam - -b ${prefix}.bed > \
   ${prefix}.uniqcov
 
 # produce locus annotation
 echo "Annotating loci using genome annotation..." >&2
-./annotate_loci ${prefix}.bed ${annotfile} ${prefix}.cov \
+./locusmerge_annotate_loci ${prefix}.bed ${annotfile} ${prefix}.cov \
   ${prefix}.annot
 
 # perform clustering
@@ -179,6 +186,7 @@ echo "Merging loci into clusters..." >&2
 
 # select loci and reads per cluster
 echo "Selecting representative loci..." >&2
-./select_loci ${prefix}.bed ${prefix}.clusters
+./locusmerge_select_loci ${prefix}.bed ${prefix}.clusters
 echo "Selecting reads mapping to representative loci..." >&2
-./select_reads ${prefix}.bam ${prefix}.bed.clustered
+./locusmerge_select_reads ${prefix}.bam ${prefix}.bed.clustered
+

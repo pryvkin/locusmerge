@@ -25,7 +25,7 @@ fi
 echo "Detected ${annotext} annotation format." >&2
 echo "Intersecting loci with annotation..." >&2
 
-bedtools intersect -wao -s -a data/bamfile.bed -b $annot | \
+bedtools intersect -wao -s -a $locibed -b $annot | \
   gawk '{FS="\t"; OFS="\t"}
         { 
          if ($8 != ".") {

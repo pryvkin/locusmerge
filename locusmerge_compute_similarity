@@ -9,7 +9,7 @@ bam=$1
 bed=$2
 maxhits=$3
 
-./bam_filter_by_nh $bam $maxhits /dev/stdout | \
+./locusmerge_bam_filter_by_nh $bam $maxhits /dev/stdout | \
   bedtools intersect -s -wo -abam - -b $bed | \
   awk '{print $4"\t"$16"\t"($3-$2)}' | \
   ./locusmerge_pairs - | sort | uniq -c | awk '{print $2"\t"$3"\t"$1}' | \
