@@ -1,0 +1,17 @@
+#!/bin/bash
+
+### Build the genome annotation for A. thaliana
+###   using Ensembl as a source
+### Output: annot/ath_ensembl.gtf
+
+mkdir -p annot
+cd annot
+
+# download gtf from Ensembl
+wget ftp://ftp.ensemblgenomes.org/pub/release-20/plants/gtf/arabidopsis_thaliana/Arabidopsis_thaliana.TAIR10.20.gtf.gz
+gunzip -c Arabidopsis_thaliana.TAIR10.20.gtf.gz > \
+  annot/ath_ensembl.gtf
+
+# then write annot/curated/ath_ensembl_class_overlaps.txt by hand
+# specifying which classes you'll allow to co-exist in locus clusters
+# (i.e., which classes we'll allow lots of cross-mapping between)

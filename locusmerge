@@ -1,0 +1,184 @@
+#!/bin/bash
+
+### locusmerge
+## A solution to the cross-mapping/multi-mapping problem
+## in small RNA-seq data.
+
+# Merges cross-mapping small RNA loci into clusters
+# based on sequence identity and then takes a single
+# representative locus from each cluster
+
+DEBUG=0
+
+function usage() {
+   echo "USAGE: $0 [OPTIONS] in.bam annot outprefix
+   	   in.bam      the input BAM file
+	   annot       genome annotation to use (hsa or ath)
+	   outprefix   all output files will start with this; e.g.,
+                       data/out
+         OPTIONS: (defaults)
+           --ncpu=N       use N CPUs in parallel (1)
+           --maxhits=M    allow up to M hits for each read (5)
+           --threshold=T  minimum counts to include a site in a locus (10)
+           --minrun=R     minimum consecutive bp to continue a locus (14)
+           --maxgap=G     maximum consecutive non-expressed bp after
+                              which a locus is ended (44)
+           --annotdir=dir directory containing annotations (annot/)
+" >&2
+}
+
+# default location for annotations
+ncpu=1
+loc_call_maxhits=5
+loc_call_threshold=10
+loc_call_minrun=14
+loc_call_maxgap=44
+ANNOTDIR=annot/
+
+for arg
+do
+    delim=""
+    case "$arg" in
+       --help) args="${args}-h ";;
+       --ncpu) args="${args}-p ";;
+       --maxhits) args="${args}-m ";;
+       --threshold) args="${args}-t ";;
+       --minrun) args="${args}-r ";;
+       --maxgap) args="${args}-g ";;
+       --annotdir) args="#{args}-a ";;
+       # pass through anything else
+       *) [[ "${arg:0:1}" == "-" ]] || delim="\""
+           args="${args}${delim}${arg}${delim} ";;
+    esac
+done
+# reset the translated args
+eval set -- $args
+# now we can process with getopt
+while getopts ":hvc:" opt; do
+    case $opt in
+        h)  usage ;;
+        n)  ncpu=$OPTARG ;;
+        m)  loc_call_maxhits=$OPTARG ;;
+        t)  loc_call_threshold=$OPTARG ;;
+        r)  loc_call_minrun=$OPTARG ;;
+        g)  loc_call_maxgap=$OPTARG ;;
+	a)  ANNOTDIR=$OPTARG ;;
+        d)  DEBUG=1 ;;
+        \?) usage ;;
+        :)
+        echo "option -$OPTARG requires an argument"
+        usage
+        ;;
+    esac
+done
+shift $((OPTIND - 1))
+
+if [ $# -lt 3 ]; then
+   usage
+   exit 1
+fi
+
+inbam=$1
+annot=$2
+prefix=$3
+
+echo "Running with options:
+     ncpu=$ncpu
+     loc_call_maxhits=$loc_call_maxhits
+     loc_call_threshold=$loc_call_threshold
+     loc_call_minrun=$loc_call_minrun
+     loc_call_maxgap=$loc_call_maxgap
+     annot_dir=$ANNOTDIR
+     inbam=$inbam
+     annot=$annot
+     outprefix=$prefix
+" >&2
+
+case $annot in
+     hsa) annotfile=${ANNOTDIR}/hsa_ensembl.gtf
+          clsover=${ANNOTDIR}/curated/hsa_ensembl_class_overlaps.txt
+        ;;
+     ath) annotfile=${ANNOTDIR}/ath_ensembl.gtf
+     	  clsover=${ANNOTDIR}/curated/ath_ensembl_class_overlaps.txt
+	;;
+     *) echo "Unsupported annotation: ${annot}" >&2
+     	;;
+esac
+
+if [ ! -e $annotfile ]; then
+   echo "ERROR: Could not locate annotation file ${annotfile}" >&2
+   exit	1
+fi
+if [ ! -e $clsover ]; then
+   echo "ERROR: Could not locate cls overlap file ${clsover}" >&2
+   exit 1
+fi
+
+# create output dir if it doesn't exist
+if [ ! -e `dirname $prefix` ]; then
+   mkdir -p `dirname $prefix`
+fi
+
+# remove reads w/ > N mappings
+echo "Removing reads with > ${loc_call_maxhits} hits..." >&2
+./bam_filter_by_nh $inbam ${loc_call_maxhits} ${prefix}.bam
+
+# convert to bedgraph
+echo "Converting BAM to bedGraph..." >&2
+./bam_to_bedgraph.sh ${prefix}.bam ${prefix}
+
+# segment into loci, producing a BED file
+echo "Segmenting transcriptome into loci (+)..." >&2
+./call_loci ${prefix}.pos.bg \ 
+  --threshold=${loc_call_threshold} --minrun=${loc_call_minrun} \
+  --maxgap=${loc_call_maxgap} | \
+  awk '{OFS="\t"; print $1,$2,$3,".",0,"+"}' > ${prefix}.pos.bed
+echo "Segmenting transcriptome into loci (-)..." >&2
+./call_loci ${prefix}.neg.bg | \
+  --threshold=${loc_call_threshold} --minrun=${loc_call_minrun} \
+  --maxgap=${loc_call_maxgap} | \
+  awk '{OFS="\t"; print $1,$2,$3,".",0,"-"}' > ${prefix}.neg.bed
+
+# merge per-strand bed files and generate locus IDs
+echo "Merging per-strand locus BEDs into final BED..." >&2
+cat ${prefix}.pos.bed ${prefix}.neg.bed | \
+  sort -k1,1 -k2n,2n | \
+  awk '{OFS="\t"; $4 = sprintf("L%09d",NR); print }' > ${prefix}.bed
+
+# sort the bam file by name
+# requires standalone devel version of samtools (0.1.19+)
+echo "Sorting BAM by read name..." >&2
+samtools sort -n -f -@ $ncpu ${prefix}.bam ${prefix}_byname.bam
+
+# compute similarity scores between loci
+echo "Computing similarity scores..." >&2
+./locusmerge_compute_similarity ${prefix}_byname.bam ${prefix}.bed \
+  ${loc_call_maxhits} > ${prefix}.sim
+
+# compute coverage of loci
+echo "Computing coverage..." >&2
+bedtools coverage -s -counts -split -abam ${prefix}.bam -b ${prefix}.bed > \
+  ${prefix}.cov
+
+# compute uniq coverage of loci
+echo "Computing unique coverage..." >&2
+./bam_filter_by_nh ${prefix}.bam 1 /dev/stdout | \
+  bedtools coverage -s -counts -split -abam - -b ${prefix}.bed > \
+  ${prefix}.uniqcov
+
+# produce locus annotation
+echo "Annotating loci using genome annotation..." >&2
+./annotate_loci ${prefix}.bed ${annotfile} ${prefix}.cov \
+  ${prefix}.annot
+
+# perform clustering
+echo "Merging loci into clusters..." >&2
+./locusmerge_cluster.R ${prefix}.sim ${prefix}.annot ${prefix}.cov \
+  ${prefix}.uniqcov $clsover \
+  ${prefix}.clusters
+
+# select loci and reads per cluster
+echo "Selecting representative loci..." >&2
+./select_loci ${prefix}.bed ${prefix}.clusters
+echo "Selecting reads mapping to representative loci..." >&2
+./select_reads ${prefix}.bam ${prefix}.bed.clustered

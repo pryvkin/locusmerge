@@ -1,0 +1,7 @@
+# list of class pairs that are allowed to share a cluster without penalty
+# NOTE: these relationships are transitive so you don't need to
+#       specify every single pair when a group of classes go together
+intergenic	*
+protein_coding	pseudogene
+transposable_element_gene	pseudogene
+
