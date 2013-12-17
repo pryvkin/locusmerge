@@ -3,29 +3,29 @@ locusmerge
 
 An algorithm for clustering multi-mapping RNA-seq reads into representative loci
 
-## INSTALLING DEPENDENCIES
-### samtools
+## Installing dependencies
+#### samtools
 git clone https://github.com/samtools/samtools -b standalone
 cd samtools
 make
 cd ..
 
-### bedtools
+#### bedtools
 git clone https://github.com/arq5x/bedtools2
 cd bedtools2
 make 
 sudo make install
 
-### R packages:
+#### R packages:
 In R:
 install.packages(c("igraph", "fastcluster"))
 
 
-## BUILDING
+## Building
 
 make
 
-## USAGE
+## Usage
 ### Building genome annotations
 First, you need a genome annotation
 ./locusmerge_build_annot_hsa
@@ -41,7 +41,7 @@ Example for A. thaliana with parallelized sorting
 To see more options:
 ./locusmerge
 
-## OUTPUT
+## Output
 
 Reads that map to clustered loci:
 *.bamfile.bam.clustered
