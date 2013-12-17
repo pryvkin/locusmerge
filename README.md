@@ -55,13 +55,9 @@ To see more options:
 ## Output
 
 Reads that map to clustered loci:
-
 *.bamfile.bam.clustered
 
-
 Clustered loci and information about each cluster:
-
 *.bed.clustered
-
 *.clusters
 
