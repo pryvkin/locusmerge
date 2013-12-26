@@ -63,3 +63,7 @@ Clustered loci and information about each cluster:
 *.bed.clustered
 *.clusters
 
+
+
+[![Bitdeli Badge](https://d2weczhvl823v0.cloudfront.net/pryvkin/locusmerge/trend.png)](https://bitdeli.com/free "Bitdeli Badge")
+
